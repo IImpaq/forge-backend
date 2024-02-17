@@ -1,14 +1,32 @@
 import Fluent
 import Vapor
 
-func routes(_ app: Application) throws {
-    app.get { req async throws in
-        try await req.view.render("index", ["title": "Hello Vapor!"])
+func routes(_ app: Application) throws { 
+    app.post("register") { req async throws -> User in
+        try User.Create.validate(content: req)
+        let create = try req.content.decode(User.Create.self)
+        guard create.password == create.confirmPassword else {
+            throw Abort(.badRequest, reason: "Passwords did not match")
+        }
+        let user = try User(
+            name: create.name,
+            email: create.email,
+            passwordHash: Bcrypt.hash(create.password)
+        )
+        try await user.save(on: req.db)
+        return user
     }
-
-    app.get("hello") { req async -> String in
-        "Hello, world!"
+    
+    let passwordProtected = app.grouped(User.authenticator())
+    passwordProtected.post("login") { req async throws -> UserToken in
+        let user = try req.auth.require(User.self)
+        let token = try user.generateToken()
+        try await token.save(on: req.db)
+        return token
     }
-
-    try app.register(collection: TodoController())
+    
+    let tokenProtected = app.grouped(UserToken.authenticator())
+    tokenProtected.get("me") { req -> User in
+        try req.auth.require(User.self)
+    }
 }
